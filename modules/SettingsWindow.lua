@@ -286,6 +286,20 @@ local function main()
 		
 		-- Options
 		
+		AddSeperator("Privacy & Security")
+
+		local tccNet = AddCheckbox("Allow Network Decompilation (api.plusgiant5.com)", Settings.TCC and Settings.TCC.NetworkDecompiler == "allowed")
+		tccNet.OnInput:Connect(function()
+			Settings.TCC = Settings.TCC or {}
+			Settings.TCC.NetworkDecompiler = tccNet.Toggled and "allowed" or "denied"
+		end)
+
+		local tccFile = AddCheckbox("Allow File Access (saveinstance, writefile)", Settings.TCC and Settings.TCC.FileAccess == "allowed")
+		tccFile.OnInput:Connect(function()
+			Settings.TCC = Settings.TCC or {}
+			Settings.TCC.FileAccess = tccFile.Toggled and "allowed" or "denied"
+		end)
+
 		AddSeperator("UI")
 		
 		local titleonmiddle = AddCheckbox("Window Title On Middle", Settings.Window.TitleOnMiddle)
