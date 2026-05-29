@@ -124,6 +124,10 @@ DefaultSettings = (function()
 			PreferDecompilerFallback = false,
 			ShinyDecompilerPort = 3000,
 		},
+		TCC = {
+			NetworkDecompiler = "notDetermined",
+			FileAccess = "notDetermined"
+		},
 		
 		RemoteBlockWriteAttribute = false, -- writes attribute to remote instance if remote is blocked/unblocked
 		ClassIcon = "NewDark",
@@ -472,12 +476,31 @@ Main = (function()
 		env.isfile = isfile
 		env.isfolder = isfolder
 		env.readfile = readfile
-		env.writefile = writefile
+		env.writefile = function(path, content)
+			local tcc_allowed = false
+			local tcc_answered = false
+			-- Do not prompt for internal settings save
+			if path == "DexPlusPlusSettings.json" or path:match("^dex/") then
+				return writefile(path, content)
+			end
+			Main.TCC.CheckPermission("FileAccess", function(allowed)
+				tcc_allowed = allowed
+				tcc_answered = true
+			end)
+			while not tcc_answered do
+				task.wait()
+			end
+			if tcc_allowed then
+				return writefile(path, content)
+			else
+				warn("Dex++: File access denied. Could not write to " .. tostring(path))
+			end
+		end
 		env.appendfile = appendfile
 		env.makefolder = makefolder
 		env.listfiles = listfiles
 		env.loadfile = loadfile
-		env.saveinstance = saveinstance or (function()
+		local _original_saveinstance = saveinstance or (function()
 			--warn("No built-in saveinstance exists, using SynSaveInstance and wrapper...")
 			if game:GetService("RunService"):IsStudio() then return function() error("Cannot run in Roblox Studio!") end end
 			local Params = {
@@ -497,6 +520,24 @@ Main = (function()
 			return wrappedsaveinstance
 		end)()
 		
+		env.saveinstance = function(...)
+			local args = {...}
+			local tcc_allowed = false
+			local tcc_answered = false
+			Main.TCC.CheckPermission("FileAccess", function(allowed)
+				tcc_allowed = allowed
+				tcc_answered = true
+			end)
+			while not tcc_answered do
+				task.wait()
+			end
+			if tcc_allowed then
+				return _original_saveinstance(unpack(args))
+			else
+				warn("Dex++: File access denied. Could not save instance.")
+			end
+		end
+
 		env.parsefile = function(name)
 			return tostring(name):gsub("[*\\?:<>|]+", ""):sub(1, 175)
 		end
@@ -556,6 +597,23 @@ Main = (function()
 			-- by lovrewe
 			--warn("No built-in decompiler exists, using Konstant decompiler...")
 			--assert(getscriptbytecode, "Exploit not supported.")
+
+			local tcc_allowed = false
+			local tcc_answered = false
+			Main.TCC.CheckPermission("NetworkDecompiler", function(allowed)
+				tcc_allowed = allowed
+				tcc_answered = true
+			end)
+
+			-- Wait until the user answers the prompt
+			while not tcc_answered do
+				task.wait()
+			end
+
+			if not tcc_allowed then
+				return "-- Decompilation cancelled: Network Decompilation permission was denied by user."
+			end
+
 			local API = "http://api.plusgiant5.com"
 
 			local request = env.request
@@ -806,6 +864,102 @@ Main = (function()
 			return res
 		end
 		recur(DefaultSettings,Settings)
+	end
+
+
+	Main.TCC = {}
+	Main.TCC.Descriptions = {
+		NetworkDecompiler = {
+			Title = "Allow Network Decompilation?",
+			Desc = "Dex++ needs to send script bytecode to an external server (api.plusgiant5.com) for decompilation."
+		},
+		FileAccess = {
+			Title = "Allow File Access?",
+			Desc = "Dex++ needs to save game instances and scripts to your local device."
+		}
+	}
+
+	Main.TCC.ShowPrompt = function(permissionType, callback)
+		local info = Main.TCC.Descriptions[permissionType]
+		if not info then callback(false) return end
+
+		local win = Lib.Window.new()
+		win:SetTitle("Privacy Request")
+		win.Alignable = false
+		win.Resizable = false
+		win:Resize(320, 160)
+
+		win.GuiElems.Window.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+
+		local title = Lib.Label.new()
+		title.Text = info.Title
+		title.TextSize = 16
+		title.Font = Enum.Font.SourceSansBold
+		title.Position = UDim2.new(0, 15, 0, 15)
+		title.Size = UDim2.new(1, -30, 0, 20)
+		win:Add(title)
+
+		local desc = Lib.Label.new()
+		desc.Text = info.Desc
+		desc.TextWrapped = true
+		desc.TextColor3 = Color3.fromRGB(200, 200, 200)
+		desc.Position = UDim2.new(0, 15, 0, 45)
+		desc.Size = UDim2.new(1, -30, 0, 40)
+		win:Add(desc)
+
+		local allowBtn = Lib.Button.new()
+		allowBtn.Text = "Allow"
+		allowBtn.Position = UDim2.new(1, -100, 1, -35)
+		allowBtn.Size = UDim2.new(0, 85, 0, 24)
+		allowBtn.Gui.BackgroundColor3 = Color3.fromRGB(0, 122, 255)
+		allowBtn.Gui.TextColor3 = Color3.fromRGB(255, 255, 255)
+		allowBtn.Gui.BorderSizePixel = 0
+
+		local denyBtn = Lib.Button.new()
+		denyBtn.Text = "Don't Allow"
+		denyBtn.Position = UDim2.new(1, -195, 1, -35)
+		denyBtn.Size = UDim2.new(0, 85, 0, 24)
+		denyBtn.Gui.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
+		denyBtn.Gui.TextColor3 = Color3.fromRGB(220, 220, 220)
+		denyBtn.Gui.BorderSizePixel = 0
+
+		local answered = false
+
+		allowBtn.OnClick:Connect(function()
+			if answered then return end
+			answered = true
+			Settings.TCC = Settings.TCC or {}
+			Settings.TCC[permissionType] = "allowed"
+			if Main.SaveCurrentSettings then Main.SaveCurrentSettings() end
+			win:Close()
+			callback(true)
+		end)
+
+		denyBtn.OnClick:Connect(function()
+			if answered then return end
+			answered = true
+			Settings.TCC = Settings.TCC or {}
+			Settings.TCC[permissionType] = "denied"
+			if Main.SaveCurrentSettings then Main.SaveCurrentSettings() end
+			win:Close()
+			callback(false)
+		end)
+
+		win:Add(allowBtn)
+		win:Add(denyBtn)
+		win:Show()
+	end
+
+	Main.TCC.CheckPermission = function(permissionType, callback)
+		Settings.TCC = Settings.TCC or {}
+		local state = Settings.TCC[permissionType] or "notDetermined"
+		if state == "allowed" then
+			callback(true)
+		elseif state == "denied" then
+			callback(false)
+		else
+			Main.TCC.ShowPrompt(permissionType, callback)
+		end
 	end
 
 	Main.FetchAPI = function(callbackiflong, callbackiftoolong, XD)
