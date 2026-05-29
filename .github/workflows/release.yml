@@ -1,0 +1,68 @@
+name: Build and Release
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python 3
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Run Build Script
+        run: python build.py
+
+      - name: Get Commit Information
+        id: commit_info
+        run: |
+          echo "SHORT_SHA=$(git rev-parse --short HEAD)" >> $GITHUB_ENV
+          echo "COMMIT_MSG=$(git log -1 --pretty=format:'%s')" >> $GITHUB_ENV
+          echo "COMMIT_AUTHOR=$(git log -1 --pretty=format:'%an')" >> $GITHUB_ENV
+          echo "DATE=$(date +'%Y-%m-%d-%H-%M-%S')" >> $GITHUB_ENV
+
+          # Using heredoc to handle multiline commit bodies safely
+          EOF=$(dd if=/dev/urandom bs=15 count=1 status=none | base64)
+          echo "COMMIT_BODY<<$EOF" >> $GITHUB_ENV
+          git log -1 --pretty=format:'%b' >> $GITHUB_ENV
+          echo "" >> $GITHUB_ENV
+          echo "$EOF" >> $GITHUB_ENV
+
+      - name: Create Release Text
+        id: create_release_text
+        run: |
+          cat << 'RELEASE_EOF' > release_body.md
+          ## Auto-generated Build
+
+          **Commit:** \`${{ env.SHORT_SHA }}\`
+          **Author:** ${{ env.COMMIT_AUTHOR }}
+
+          ### Commit Message
+          ${{ env.COMMIT_MSG }}
+
+          ${{ env.COMMIT_BODY }}
+
+          ### Artifacts
+          - \`out.lua\` - Built and merged lua code
+          RELEASE_EOF
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ env.DATE }}-${{ env.SHORT_SHA }}
+          name: Build ${{ env.SHORT_SHA }}
+          body_path: release_body.md
+          files: out.lua
+          make_latest: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
